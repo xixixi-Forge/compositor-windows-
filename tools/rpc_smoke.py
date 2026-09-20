@@ -8,16 +8,57 @@ through a few calls and checks the answers. CI starts the app headless with
 """
 import base64
 import json
+import os
 import socket
 import sys
 import time
 
 
+class PipeFile:
+    """A tiny line reader/writer over a Windows named-pipe handle.
+
+    Qt's QLocalServer presents an automation "socket" as a named pipe on
+    Windows, and Python's socket module has no AF_UNIX there, so the pipe is
+    opened as a plain file and wrapped in the write/flush/readline surface the
+    rest of this script expects.
+    """
+
+    def __init__(self, raw):
+        self.raw = raw
+        self.buffer = b""
+
+    def write(self, text):
+        self.raw.write(text.encode("utf-8"))
+
+    def flush(self):
+        pass
+
+    def readline(self):
+        while b"\n" not in self.buffer:
+            chunk = self.raw.read(65536)
+            if not chunk:
+                break
+            self.buffer += chunk
+        if b"\n" in self.buffer:
+            line, self.buffer = self.buffer.split(b"\n", 1)
+            return line.decode("utf-8") + "\n"
+        line, self.buffer = self.buffer, b""
+        return line.decode("utf-8") if line else ""
+
+
+def open_connection(path):
+    """Return a file-like object for the automation endpoint at `path`."""
+    if os.name == "nt":
+        pipe = "\\\\.\\pipe\\" + path.replace("/", "\\").lstrip("\\")
+        return PipeFile(open(pipe, "r+b", buffering=0))
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(path)
+    return sock.makefile("rw", encoding="utf-8")
+
+
 class Rpc:
     def __init__(self, path):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.connect(path)
-        self.file = self.sock.makefile("rw", encoding="utf-8")
+        self.file = open_connection(path)
         self.next_id = 0
         self.events = []
 
@@ -92,6 +133,14 @@ def main():
     assert adj["kind"] == "adjustment" and adj["name"] == "Brighter", adj
     got = rpc.call("adjustments.get", id=adj["id"])
     assert abs(got["settings"]["exposure"] - 0.5) < 1e-6, got
+    # Hue/Saturation: the top-level sliders adjustments.get reports are honoured on set,
+    # even though the manifest's hsvSettings block is what the core parser prefers.
+    hsv = rpc.call("layers.add", kind="adjustment", adjustmentKind="Hue/Saturation", name="HS")
+    applied = rpc.call("adjustments.set", id=hsv["id"], settings={"saturation": -100, "lightness": 5})
+    assert abs(applied["settings"]["saturation"] + 100) < 1e-6, applied
+    assert abs(applied["settings"]["lightness"] - 5) < 1e-6, applied
+    rpc.call("layers.delete", id=hsv["id"])
+    rpc.call("layers.select", id=target["id"])
     rpc.call("layers.select", id=target["id"])
     rpc.call("pixels.filter", kind="Gaussian Blur", radius=2)
     rpc.call("pixels.filter", kind="Lens Correction", distortion=20, bicubic=True)
@@ -143,6 +192,16 @@ def main():
     order = [l["id"] for l in rpc.call("layers.list")]
     assert order.index(under["id"]) == order.index(target["id"]) + 1, order
 
+    # layers.get reports the real nesting depth, like layers.list, not a flat 0.
+    folder = rpc.call("layers.add", kind="group", name="Depth Folder")
+    child = rpc.call("layers.add", kind="pixels", name="Depth Child")
+    rpc.call("layers.move", id=child["id"], parent=folder["id"])
+    listed = [l for l in rpc.call("layers.list") if l["id"] == child["id"]][0]
+    fetched = rpc.call("layers.get", id=child["id"])
+    assert listed["depth"] > 0 and fetched["depth"] == listed["depth"], (listed, fetched)
+    rpc.call("layers.delete", id=folder["id"])
+    rpc.call("layers.select", id=target["id"])
+
     # History listing and a selection mask.
     names = rpc.call("history.list")
     assert names["undo"] and isinstance(names["undo"][-1], str), names
@@ -150,6 +209,25 @@ def main():
     mask = rpc.call("selection.render", maxSize=64)
     assert base64.b64decode(mask["png"])[:4] == b"\x89PNG", mask
     rpc.call("selection.none")
+
+    # Loading a mask's black areas as a selection (as on the Mac): the hidden region is
+    # what gets selected, not the revealed one. A reveal-all mask with a black patch in it
+    # yields a selection exactly over the patch.
+    rpc.call("layers.select", id=target["id"])
+    layer = rpc.call("layers.get", id=target["id"])
+    if layer.get("mask"):
+        rpc.call("layers.mask", action="delete")
+    rpc.call("layers.mask", action="add", revealing=True)   # reveal-all; the mask is now active
+    rpc.call("selection.rect", x=12, y=14, width=20, height=22)
+    rpc.call("pixels.fill", color="#000000")                # black = hidden
+    rpc.call("selection.none")
+    loaded = rpc.call("selection.fromLayer", mask=True)
+    b = loaded["bounds"]
+    assert (b["x"], b["y"], b["width"], b["height"]) == (12, 14, 20, 22), loaded
+    rpc.call("selection.none")
+    rpc.call("layers.mask", action="delete")
+    rpc.call("history.undo")   # drop the mask edit itself
+    print("mask selection polarity: hidden areas selected")
 
     # Events: after subscribing, an edit produces notifications before the next reply.
     rpc.call("events.subscribe", kinds=["layers", "history"])

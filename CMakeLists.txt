@@ -31,6 +31,12 @@ if(NOT COMPOSITOR_ARCH_FLAGS STREQUAL "")
     add_compile_options(${COMPOSITOR_ARCH_FLAG_LIST})
 endif()
 
+# Windows notes: MinGW's <math.h> only exposes M_PI and friends when _USE_MATH_DEFINES is set
+# (glibc exposes them by default), and <windows.h> defines min/max as macros unless NOMINMAX is set.
+if(WIN32)
+    add_compile_definitions(_USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+
 add_library(compositor_warnings INTERFACE)
 target_compile_options(compositor_warnings INTERFACE
     $<$<COMPILE_LANG_AND_ID:C,GNU,Clang>:-Wall -Wextra>

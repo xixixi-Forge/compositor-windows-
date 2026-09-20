@@ -40,13 +40,53 @@ def socket_path() -> str:
     env = os.environ.get("COMPOSITOR_RPC_SOCKET")
     if env:
         return env
-    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    # Match QStandardPaths::RuntimeLocation, which the app uses: $XDG_RUNTIME_DIR
+    # (or /tmp) on Unix, the home directory on Windows.
+    if os.name == "nt":
+        runtime = os.path.expanduser("~")
+    else:
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
     return os.path.join(runtime, "compositor-linux.sock")
+
+
+class _PipeFile:
+    """Line-oriented file over a Windows named-pipe handle (see rpc_smoke.py)."""
+
+    def __init__(self, raw) -> None:
+        self.raw = raw
+        self.buffer = b""
+
+    def write(self, text: str) -> None:
+        self.raw.write(text.encode("utf-8"))
+
+    def flush(self) -> None:
+        pass
+
+    def readline(self) -> str:
+        while b"\n" not in self.buffer:
+            chunk = self.raw.read(65536)
+            if not chunk:
+                break
+            self.buffer += chunk
+        if b"\n" in self.buffer:
+            line, self.buffer = self.buffer.split(b"\n", 1)
+            return line.decode("utf-8") + "\n"
+        line, self.buffer = self.buffer, b""
+        return line.decode("utf-8") if line else ""
+
+
+def open_connection(path: str):
+    """A file-like object for the automation endpoint at `path`."""
+    if os.name == "nt":
+        pipe = "\\\\.\\pipe\\" + path.replace("/", "\\").lstrip("\\")
+        return _PipeFile(open(pipe, "r+b", buffering=0))
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(path)
+    return sock.makefile("rw", encoding="utf-8")
 
 
 class Connection:
     def __init__(self) -> None:
-        self.sock: Optional[socket.socket] = None
         self.file = None
         self.next_id = 0
         self.child: Optional[subprocess.Popen] = None
@@ -83,10 +123,7 @@ class Connection:
         raise RuntimeError(f"launched {binary} but no socket appeared at {path}")
 
     def _open(self, path: str) -> None:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(path)
-        self.sock = sock
-        self.file = sock.makefile("rw", encoding="utf-8")
+        self.file = open_connection(path)
 
     def call(self, method: str, params: Optional[dict] = None) -> Any:
         if self.file is None:

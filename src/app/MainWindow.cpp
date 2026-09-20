@@ -2,6 +2,7 @@
 #include "CanvasFrame.h"
 #include "CanvasWidget.h"
 #include "Dialogs.h"
+#include "Heif.h"
 #include "ImageConvert.h"
 #include "LayersPanel.h"
 #include "AdjustmentsPanel.h"
@@ -61,6 +62,10 @@ namespace {
 QString imageFilter() {
     QStringList patterns;
     for (auto& format : QImageReader::supportedImageFormats()) patterns << "*." + QString::fromLatin1(format);
+    // Qt lacks a HEIC plugin on this platform, but libheif may still be able to decode it.
+    if (app::heifSupported())
+        for (const char* extension : {"*.heic", "*.heif", "*.hif"})
+            if (!patterns.contains(QLatin1String(extension))) patterns << QLatin1String(extension);
     return QObject::tr("Images (%1)").arg(patterns.join(' '));
 }
 
@@ -574,11 +579,14 @@ void MainWindow::buildMenus() {
     select->addSeparator();
     QMenu* load = select->addMenu(tr("&Load as Selection"));
     needsDocument(load->addAction(tr("Layer Pixels"), this, [this] { if (session_->activeLayerId()) session_->loadLayerAsSelection(*session_->activeLayerId(), false, SelectionMode::Replace); }));
-    needsDocument(load->addAction(tr("Layer Mask"), this, [this] { if (session_->activeLayerId()) session_->loadLayerAsSelection(*session_->activeLayerId(), true, SelectionMode::Replace); }));
+    needsDocument(load->addAction(tr("Mask's Black Areas"), this, [this] { if (session_->activeLayerId()) session_->loadLayerAsSelection(*session_->activeLayerId(), true, SelectionMode::Replace); }));
     load->addSeparator();
     needsDocument(load->addAction(tr("Add Layer Pixels"), this, [this] { if (session_->activeLayerId()) session_->loadLayerAsSelection(*session_->activeLayerId(), false, SelectionMode::Add); }));
     needsDocument(load->addAction(tr("Subtract Layer Pixels"), this, [this] { if (session_->activeLayerId()) session_->loadLayerAsSelection(*session_->activeLayerId(), false, SelectionMode::Subtract); }));
     needsDocument(load->addAction(tr("Intersect with Layer Pixels"), this, [this] { if (session_->activeLayerId()) session_->loadLayerAsSelection(*session_->activeLayerId(), false, SelectionMode::Intersect); }));
+    needsDocument(load->addAction(tr("Add Mask's Black Areas"), this, [this] { if (session_->activeLayerId()) session_->loadLayerAsSelection(*session_->activeLayerId(), true, SelectionMode::Add); }));
+    needsDocument(load->addAction(tr("Subtract Mask's Black Areas"), this, [this] { if (session_->activeLayerId()) session_->loadLayerAsSelection(*session_->activeLayerId(), true, SelectionMode::Subtract); }));
+    needsDocument(load->addAction(tr("Intersect with Mask's Black Areas"), this, [this] { if (session_->activeLayerId()) session_->loadLayerAsSelection(*session_->activeLayerId(), true, SelectionMode::Intersect); }));
 
     QMenu* filter = menuBar()->addMenu(tr("Filte&r"));
     auto filterAction = [this, filter, &needsDocument](const QString& label, FilterKind kind) {
@@ -837,10 +845,17 @@ void MainWindow::importFile(const QString& path, std::optional<QPointF> at) {
 
 namespace {
 std::shared_ptr<const compositor::Image> readImageFile(const QString& path, QString* error) {
-    QImageReader reader(path);
-    reader.setAutoTransform(true);
-    QImage image = reader.read();
-    if (image.isNull()) { if (error) *error = reader.errorString(); return nullptr; }
+    QImage image;
+    if (app::isHeifPath(path) && !QImageReader::imageFormat(path).size()) {
+        // Qt has no HEIC plugin here (Windows, and some Linux builds): fall back to libheif.
+        image = app::readHeifImage(path, error);
+    } else {
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        image = reader.read();
+        if (image.isNull()) { if (error) *error = reader.errorString(); return nullptr; }
+    }
+    if (image.isNull()) return nullptr;
     if (image.width() > 30000 || image.height() > 30000) { if (error) *error = QObject::tr("Images up to 30,000 pixels per side are supported."); return nullptr; }
     return fromQImage(image);
 }

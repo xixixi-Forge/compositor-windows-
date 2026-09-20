@@ -81,6 +81,42 @@ QJsonObject obj(const QJsonObject& p, const char* key) {
     return v.toObject();
 }
 
+/// Mirrors the top-level hue/saturation/lightness/colorize sliders of a Hue/Saturation
+/// settings object into its hsvSettings "Master" entry, so a client can patch either form.
+/// The manifest keeps hsvSettings authoritative (as the Mac's LayerAdjustment does), so the
+/// sliders have to be folded in here rather than in the core parser.
+void mirrorHsvSliders(QJsonObject& settings) {
+    const bool hasSlider = settings.contains("hue") || settings.contains("saturation") || settings.contains("lightness") || settings.contains("colorize");
+    if (!hasSlider) return;
+    QJsonObject hsv = settings.value("hsvSettings").toObject();
+    // adjustments is a flat [name, {hue, saturation, lightness}, ...] array (see hsvJson).
+    QJsonArray adjustments = hsv.value("adjustments").toArray();
+    double hue = 0, saturation = 0, lightness = 0;
+    for (int i = 0; i + 1 < adjustments.size(); i += 2) {
+        if (adjustments[i].toString() != QLatin1String("Master")) continue;
+        QJsonObject master = adjustments[i + 1].toObject();
+        hue = master.value("hue").toDouble();
+        saturation = master.value("saturation").toDouble();
+        lightness = master.value("lightness").toDouble();
+        break;
+    }
+    if (settings.contains("hue")) hue = settings.value("hue").toDouble();
+    if (settings.contains("saturation")) saturation = settings.value("saturation").toDouble();
+    if (settings.contains("lightness")) lightness = settings.value("lightness").toDouble();
+    if (settings.contains("colorize")) hsv["colorize"] = settings.value("colorize");
+    QJsonObject replacement{{"hue", hue}, {"saturation", saturation}, {"lightness", lightness}};
+    QJsonArray rebuilt;
+    bool replaced = false;
+    for (int i = 0; i + 1 < adjustments.size(); i += 2) {
+        rebuilt.append(adjustments[i]);
+        if (adjustments[i].toString() == QLatin1String("Master")) { rebuilt.append(replacement); replaced = true; }
+        else rebuilt.append(adjustments[i + 1]);
+    }
+    if (!replaced) { rebuilt.prepend(replacement); rebuilt.prepend(QLatin1String("Master")); }
+    hsv["adjustments"] = rebuilt;
+    settings["hsvSettings"] = hsv;
+}
+
 QString qs(const std::string& s) { return QString::fromStdString(s); }
 
 SelectionMode selectionMode(const QJsonObject& p) {
@@ -496,7 +532,14 @@ void AutomationServer::registerHandlers() {
         }
         return out;
     });
-    add("layers.get", [layer](const QJsonObject& p) { return layerJson(layer(p), 0); });
+    add("layers.get", [layer, document](const QJsonObject& p) {
+        const Layer& l = layer(p);
+        // Report the real nesting depth, as layers.list does, rather than a flat 0.
+        int depth = 0;
+        for (const HierarchyEntry& e : hierarchyEntries(document().layers, true))
+            if (e.layer->id == l.id) { depth = e.depth; break; }
+        return layerJson(l, depth);
+    });
     add("layers.select", [session, layer](const QJsonObject& p) {
         EditorSession* s = session();
         if (has(p, "ids")) {
@@ -545,6 +588,7 @@ void AutomationServer::registerHandlers() {
                 const Layer* l = s->activeLayer();
                 QJsonObject settings = obj(p, "settings");
                 settings["kind"] = QString::fromUtf8(adjustmentKindName(*ak));
+                mirrorHsvSliders(settings);
                 AdjustmentSettings parsed;
                 if (!l || !AdjustmentSettings::parse(QJsonDocument(settings).toJson(QJsonDocument::Compact).toStdString(), parsed)) fail("couldn't parse settings", invalidParams);
                 s->setAdjustment(l->id, parsed);
@@ -678,6 +722,7 @@ void AutomationServer::registerHandlers() {
         QJsonObject patch = obj(p, "settings");
         for (auto it = patch.begin(); it != patch.end(); ++it) settings[it.key()] = it.value();
         settings["kind"] = QString::fromUtf8(adjustmentKindName(l.adjustment->kind));
+        mirrorHsvSliders(settings);
         AdjustmentSettings parsed;
         if (!AdjustmentSettings::parse(QJsonDocument(settings).toJson(QJsonDocument::Compact).toStdString(), parsed)) fail("couldn't parse settings; adjustments.get shows the shape", invalidParams);
         session()->setAdjustment(l.id, parsed);
@@ -700,6 +745,7 @@ void AutomationServer::registerHandlers() {
         QJsonObject patch = obj(p, "settings");
         for (auto it = patch.begin(); it != patch.end(); ++it) settings[it.key()] = it.value();
         settings["kind"] = QString::fromUtf8(adjustmentKindName(*kind));
+        mirrorHsvSliders(settings);
         AdjustmentSettings parsed;
         if (!AdjustmentSettings::parse(QJsonDocument(settings).toJson(QJsonDocument::Compact).toStdString(), parsed)) fail("couldn't parse settings; adjustments.defaults shows the shape", invalidParams);
         LayerTransform transform;

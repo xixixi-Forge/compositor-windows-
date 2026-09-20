@@ -37,6 +37,31 @@ Under a Wayland session Qt picks the Wayland platform on its own; force it with
 `QT_QPA_PLATFORM=wayland` if needed. `QT_QPA_PLATFORM=xcb` runs under X11 or
 XWayland.
 
+### Windows
+
+The same sources build under MSYS2's MinGW-w64 environment; only the compiler,
+Qt and OpenCV packages differ. In an "MSYS2 MINGW64" shell:
+
+```bash
+pacman -S mingw-w64-x86_64-{gcc,cmake,ninja,qt6-base,qt6-svg,qt6-imageformats,libpng,opencv,libheif}
+cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build-win -j
+ctest --test-dir build-win --output-on-failure
+./build-win/src/app/compositor-linux.exe
+```
+
+The root `CMakeLists.txt` sets `_USE_MATH_DEFINES`, `NOMINMAX` and
+`WIN32_LEAN_AND_MEAN` for MinGW (its `<math.h>` hides `M_PI` otherwise, and
+`<windows.h>` defines `min`/`max` as macros). The automation "socket" is a
+Windows named pipe: `--rpc-socket name` listens on `\\.\pipe\name`, the default
+path follows Qt's `RuntimeLocation` (the user's home directory), and the Python
+tools (`tools/rpc_smoke.py`, `mcp/compositor_mcp.py`) open the pipe directly
+because CPython on Windows has no `AF_UNIX`. `--headless` still works, so the
+whole automation surface is available.
+
+OpenCV comes from MSYS2 (`mingw-w64-x86_64-opencv`, currently 5.x); it is found
+through its CMake config and supplies the DNN module Remove Background needs.
+
 Options: `-DCOMPOSITOR_BUILD_APP=OFF` builds only the core and tests;
 `-DCOMPOSITOR_WITH_OPENCV=OFF` leaves out the Remove Background model;
 `-DCOMPOSITOR_WARNINGS_AS_ERRORS=ON` is what CI uses.
@@ -265,8 +290,16 @@ packaging/                      .desktop, icon, MIME type
 
 ## Not ported
 
-Nothing on the Mac README's feature list is missing now. Remove Background
-uses a different model than Apple's Vision, so its cutouts differ in detail.
+Nothing on the Mac README's feature list is missing now. Two things differ in
+kind, not in coverage:
+
+- Remove Background uses a segmentation model (IS-Net / U2Net / PP-HumanSeg
+  through OpenCV's DNN) rather than Apple's Vision, so cutouts differ in detail.
+- HEIC/HEIF import needs a decoder that not every platform's Qt ships. The
+  build uses libheif when it is found (`-DCOMPOSITOR_WITH_LIBHEIF`, on by
+  default), and otherwise falls back to a Qt HEIC plugin when the distribution
+  provides one; see `src/app/Heif.cpp`. On MSYS2, install
+  `mingw-w64-x86_64-libheif`.
 
 ## Keyboard shortcuts
 

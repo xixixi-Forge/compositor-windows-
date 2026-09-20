@@ -162,7 +162,7 @@ well for agents.
 
 ## Not there yet
 
-Text layers (the editor has none) and a remote transport (the socket is local
-only, by design) are the open items. Adding a method is one `add("name", handler)` in
+A remote transport (the socket is local only, by design) is the one open item.
+Adding a method is one `add("name", handler)` in
 `src/app/Automation.cpp`; the bridge's generic `rpc` tool reaches it without a
 Python change.

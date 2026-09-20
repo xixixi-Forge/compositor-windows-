@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "ImageConvert.h"
+#include "Heif.h"
 #include "ModelStore.h"
 #include "PreferencesDialog.h"
 #include "Automation.h"
@@ -41,7 +42,10 @@ namespace {
 void buildDemo(app::EditorSession& session, const QString& imagePath) {
     using namespace compositor;
     QImage base;
-    if (!imagePath.isEmpty()) { QImageReader reader(imagePath); reader.setAutoTransform(true); base = reader.read(); }
+    if (!imagePath.isEmpty()) {
+        if (app::isHeifPath(imagePath) && !QImageReader::imageFormat(imagePath).size()) base = app::readHeifImage(imagePath);
+        else { QImageReader reader(imagePath); reader.setAutoTransform(true); base = reader.read(); }
+    }
     if (base.isNull()) {
         base = QImage(640, 420, QImage::Format_RGBA8888_Premultiplied);
         for (int y = 0; y < base.height(); y++) for (int x = 0; x < base.width(); x++) base.setPixelColor(x, y, QColor(40 + x * 180 / base.width(), 60 + y * 150 / base.height(), 120));
@@ -181,6 +185,15 @@ int main(int argc, char** argv) {
     bool headless = false;
     for (int i = 1; i < argc; i++) if (std::strcmp(argv[i], "--headless") == 0 || std::strcmp(argv[i], "--call") == 0 || std::strcmp(argv[i], "--batch") == 0) headless = true;
     if (headless && !qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
+#ifdef Q_OS_WIN
+    // Qt6DBus is linked in (for the XDG portal colour scheme), but Windows has no session
+    // bus: with no address set, libdbus autolaunches dbus-daemon through dbus-launch. That
+    // daemon inherits our stdout pipe and outlives us, so a caller waiting for EOF on the
+    // pipe never returns even though we have exited. Naming the address "disabled:" makes
+    // libdbus skip the bus entirely, so no daemon is ever spawned. A bus that is genuinely
+    // configured is left alone.
+    if (qEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS").isEmpty()) qputenv("DBUS_SESSION_BUS_ADDRESS", "disabled:");
+#endif
     QApplication app(argc, argv);
     QApplication::setOrganizationName("compositor-linux");
     QApplication::setApplicationName("compositor-linux");

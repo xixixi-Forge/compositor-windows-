@@ -511,14 +511,17 @@ TEST_CASE(project_round_trip_preserves_layers_masks_groups_and_unknown_fields) {
 
     // Saving again over the existing package keeps the unknown fields.
     REQUIRE(saveProject(*loaded, std::nullopt, package.string(), error));
-    std::ifstream in(package / "manifest.json");
-    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    CHECK(text.find("futureField") != std::string::npos);
-    CHECK(text.find("futureManifestField") != std::string::npos);
-    CHECK(text.find("\"version\": 7") != std::string::npos);
-    CHECK(text.find("\"origin\": [") != std::string::npos);
-    CHECK(text.find("\"blendMode\": \"Color Dodge\"") != std::string::npos);
-    CHECK(text.find("\"sampling\": \"Smooth\"") != std::string::npos);
+    // Scoped: Windows refuses to delete the directory while the manifest is still open.
+    {
+        std::ifstream in(package / "manifest.json");
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(text.find("futureField") != std::string::npos);
+        CHECK(text.find("futureManifestField") != std::string::npos);
+        CHECK(text.find("\"version\": 7") != std::string::npos);
+        CHECK(text.find("\"origin\": [") != std::string::npos);
+        CHECK(text.find("\"blendMode\": \"Color Dodge\"") != std::string::npos);
+        CHECK(text.find("\"sampling\": \"Smooth\"") != std::string::npos);
+    }
     fs::remove_all(dir);
 }
 

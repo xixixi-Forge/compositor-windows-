@@ -28,6 +28,8 @@ set(CMAKE_AUTORCC ON)
 qt_add_executable(compositor-linux
     main.cpp
     ImageConvert.h
+    Heif.h
+    Heif.cpp
     Style.h
     Icons.h
     ColorSwatches.h
@@ -94,6 +96,21 @@ if(TARGET Qt6::DBus)
     target_link_libraries(compositor-linux PRIVATE Qt6::DBus)
     target_compile_definitions(compositor-linux PRIVATE COMPOSITOR_HAVE_DBUS)
     message(STATUS "Appearance: desktop colour scheme via the XDG portal (Qt DBus)")
+endif()
+# HEIC/HEIF import: Qt has no HEIC plugin on Windows (and on some Linux builds), so
+# decode through libheif when it is installed, matching the Mac app's import formats.
+option(COMPOSITOR_WITH_LIBHEIF "Decode HEIC/HEIF images through libheif when it is installed" ON)
+if(COMPOSITOR_WITH_LIBHEIF)
+    find_path(HEIF_INCLUDE_DIR libheif/heif.h)
+    find_library(HEIF_LIBRARY heif)
+    if(HEIF_INCLUDE_DIR AND HEIF_LIBRARY)
+        target_include_directories(compositor-linux PRIVATE ${HEIF_INCLUDE_DIR})
+        target_link_libraries(compositor-linux PRIVATE ${HEIF_LIBRARY})
+        target_compile_definitions(compositor-linux PRIVATE COMPOSITOR_HAVE_LIBHEIF)
+        message(STATUS "HEIC/HEIF: decoding through libheif (${HEIF_LIBRARY})")
+    else()
+        message(STATUS "HEIC/HEIF: libheif not found; HEIC import relies on a Qt image plugin")
+    endif()
 endif()
 set_target_properties(compositor-linux PROPERTIES OUTPUT_NAME compositor-linux)
 

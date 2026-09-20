@@ -2427,8 +2427,15 @@ void EditorSession::loadLayerAsSelection(const Uuid& id, bool mask, SelectionMod
     std::shared_ptr<GrayImage> shape;
     if (mask) {
         if (!layer->mask || !layer->mask->asset.image) return;
+        // As on the Mac, a mask's *black* (hidden) areas become the selection, so sample
+        // coverage treating everything outside the mask as revealed (white) and invert it;
+        // a fully white mask then selects nothing.
         shape = std::make_shared<GrayImage>(document_->width, document_->height, 0);
-        sampleMaskCoverage(*layer->mask->asset.image, layer->maskTransform(), document_->rect(), 1, 0, *shape, false);
+        sampleMaskCoverage(*layer->mask->asset.image, layer->maskTransform(), document_->rect(), 1, 255, *shape, false);
+        for (int y = 0; y < shape->height(); y++) {
+            uint8_t* row = shape->row(y);
+            for (int x = 0; x < shape->width(); x++) row[x] = uint8_t(255 - row[x]);
+        }
     } else {
         if (!layer->asset || !layer->asset->image) return;
         shape = coverageFromLayer(*document_, *layer);

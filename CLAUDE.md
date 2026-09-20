@@ -41,6 +41,34 @@ behave differently in CI only if the versions differ.
 - Screenshots for checking UI work: `QT_QPA_PLATFORM=offscreen ./build/src/app/compositor-linux --demo --tool brush --dialog levels --screenshot out.png`
   (`COMPOSITOR_WINDOW_SIZE=1000x700` forces the size; `QT_SCALE_FACTOR=2` a scale).
 
+## Windows: the DBus autolaunch hang is fixed in the program
+
+The app links `Qt6DBus.dll` (for the XDG portal colour scheme). On Windows, a
+run that found no session bus made libdbus autolaunch `dbus-daemon` via
+`dbus-launch`. That daemon outlives the run, and — because it is spawned inside
+the command — it inherits the stdout pipe the caller captured the command with.
+A caller that waits for EOF on that pipe before treating the command as
+finished then waits forever: the app exited, but the pipe never closes. Agent
+tool runners hung this way, and the run looked stuck with no error anywhere.
+
+`main()` now settles this itself: on Windows, when
+`DBUS_SESSION_BUS_ADDRESS` is unset, it sets it to `disabled:` before
+constructing `QApplication`, so libdbus never autolaunches a daemon. Nothing has
+to be set from the outside, and a genuinely configured bus (or any other
+platform) is left alone.
+
+```powershell
+$env:QT_QPA_PLATFORM = "offscreen"
+$p = Start-Process build-win/src/app/compositor-linux.exe `
+       -ArgumentList '--headless','--rpc-socket','smoke','--demo' -PassThru
+python tools/rpc_smoke.py smoke
+Stop-Process -Id $p.Id -Force
+```
+
+Verified against `build-win` with `tools/rpc_smoke.py`, with
+`DBUS_SESSION_BUS_ADDRESS` unset: the app runs, the RPC socket listens, the
+process returns promptly, and no `dbus-daemon.exe` appears.
+
 ## Conventions
 
 - Core (`src/core`) is Qt-free C++; the app (`src/app`) is Qt Widgets. Pixel

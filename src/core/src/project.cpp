@@ -311,8 +311,10 @@ bool checkFile(const fs::path& file, const fs::path& package, uintmax_t maximumB
     if (ec) return false;
     fs::path resolved = fs::weakly_canonical(file, ec);
     if (ec) return false;
-    std::string rootText = root.string() + "/";
-    if (resolved.string().rfind(rootText, 0) != 0) return false;
+    // Compare as generic (forward-slash) paths: fs::path::string() uses backslashes on Windows,
+    // which would never match a root prefix built with '/'.
+    std::string rootText = root.generic_string() + "/";
+    if (resolved.generic_string().rfind(rootText, 0) != 0) return false;
     if (fs::is_symlink(file, ec) || !fs::is_regular_file(file, ec)) return false;
     uintmax_t size = fs::file_size(file, ec);
     return !ec && size <= maximumBytes;
