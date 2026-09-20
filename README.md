@@ -1,16 +1,23 @@
 <p align="center">
-  <img src="docs/images/logo.svg" alt="compositor-linux" width="180">
+  <img src="docs/images/logo.svg" alt="compositor-windows" width="180">
 </p>
 
-# compositor-linux
+# compositor-windows
 
-A small, focused image editor for Linux: layers, masks, selections, brushes,
+A small, focused image editor for Windows: layers, masks, selections, brushes,
 adjustments and filters, with Photoshop-style tools and shortcuts and none of
-the bloat. It is a native port of [Compositor](https://github.com/robbietilton/Compositor)
-for macOS and opens the same `.comp` projects.
+the bloat.
+
+It is a Windows port of **[compositor-linux](https://github.com/vomitselfie/compositor-linux)**,
+which is itself a Qt 6 / C++20 port of the macOS app
+**[Compositor](https://github.com/robbietilton/Compositor)** by Wonder Assembly
+LLC. All three share one document model and open the same `.comp` projects, so
+files move between them freely. The Mac sources under `Compositor/` and
+`Compositor.xcodeproj` are kept in this tree as the reference the port is built
+against.
 
 <p align="center">
-  <img src="docs/images/screenshot.jpg" alt="compositor-linux editing a layered illustration" width="800">
+  <img src="docs/images/screenshot.jpg" alt="compositor-windows editing a layered illustration" width="800">
 </p>
 
 <p align="center">
@@ -21,39 +28,15 @@ for macOS and opens the same `.comp` projects.
 
 ## Get it
 
-Download the AppImage from the [Releases](../../releases) page, make it
-executable, and run it:
+There is no prebuilt Windows installer yet: build from source in an MSYS2
+MINGW64 shell, as below, and run `build-win/src/app/compositor-linux.exe`.
 
-```bash
-chmod +x compositor-linux-*.AppImage
-./compositor-linux-*.AppImage
-```
+On Linux and macOS the upstream
+[compositor-linux releases](https://github.com/vomitselfie/compositor-linux/releases)
+carry a self-contained AppImage and an Apple Silicon app bundle; the same
+sources build here unchanged.
 
-It runs on any x86_64 Linux from 2022 on, under Wayland or X11. Open an image
-with File > Open or drop it on the window, and go.
-
-To have it in your app launcher, with its icon, opening `.comp` projects by
-double-click, run the integration script once (no root needed; run it again
-with a newer AppImage to update, or with `--remove`):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/vomitselfie/compositor-linux/main/tools/integrate-appimage.sh | bash -s -- compositor-linux-*.AppImage
-```
-
-It keeps the AppImage in `~/Applications`. If you build from source instead,
-`sudo cmake --install build` puts the binary, launcher entry, icon and file
-type into `/usr/local`.
-
-### Trying it on a Mac
-
-Each release also carries `compositor-linux-<version>-macos-arm64.zip`, an app
-bundle for Apple Silicon built on GitHub's macOS runners. It is not signed or
-notarised, so the first launch needs one extra step: unzip it, drag the app to
-Applications, then either right-click it and choose Open, or after a first
-refusal go to System Settings > Privacy & Security and choose Open Anyway. It
-is the same editor as on Linux; `.comp` projects, PSDs and images open the same
-way. The G'MIC filters appear once `brew install gmic` has put the `gmic`
-executable on the path.
+Open an image with File > Open or drop it on the window, and go.
 
 ## What you get
 
@@ -71,6 +54,25 @@ executable on the path.
 
 The full list is in [docs/features.md](docs/features.md).
 
+## Windows notes
+
+The Windows port keeps the whole editor and its automation surface, and adds a
+few things the platform needs:
+
+- **HEIC/HEIF import.** Qt ships no HEIC plugin on Windows, so HEIC/HEIF files
+  are decoded through [libheif](https://github.com/strukturag/libheif) when it
+  is installed (`-DCOMPOSITOR_WITH_LIBHEIF`, on by default), falling back to a
+  Qt plugin when the distribution provides one. See `src/app/Heif.cpp`.
+- **Automation over a named pipe.** `--rpc-socket name` listens on
+  `\\.\pipe\name`; the Python tools (`tools/rpc_smoke.py`,
+  `mcp/compositor_mcp.py`) open the pipe directly, because CPython on Windows
+  has no `AF_UNIX`. `--headless` still works, so the whole automation surface is
+  available.
+- **No DBus autolaunch hang.** Qt6DBus is linked in for the XDG portal colour
+  scheme; on Windows, `main()` sets `DBUS_SESSION_BUS_ADDRESS=disabled:` when no
+  bus is configured, so libdbus never spawns a `dbus-daemon` that outlives the
+  process and holds a caller's stdout pipe open.
+
 ## Remove Background
 
 Off by default. Edit > Preferences > AI background removal downloads a
@@ -83,14 +85,32 @@ The editor can be driven by Claude Code or any MCP client: open files, inspect
 and edit layers, run adjustments and filters, and look at the result.
 
 ```bash
-claude mcp add compositor -- uv run /path/to/compositor-linux/mcp/compositor_mcp.py
+claude mcp add compositor -- uv run /path/to/compositor-windows/mcp/compositor_mcp.py
 ```
 
 Then ask for things like "open photo.jpg, remove the background, add a dark
 gradient behind it and export result.png". Details, the protocol and the full
 method list are in [docs/automation.md](docs/automation.md).
 
-## Build from source
+## Build on Windows
+
+In an "MSYS2 MINGW64" shell:
+
+```bash
+pacman -S mingw-w64-x86_64-{gcc,cmake,ninja,qt6-base,qt6-svg,qt6-imageformats,libpng,opencv,libheif}
+cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build-win -j
+ctest --test-dir build-win --output-on-failure
+./build-win/src/app/compositor-linux.exe
+```
+
+The root `CMakeLists.txt` sets `_USE_MATH_DEFINES`, `NOMINMAX` and
+`WIN32_LEAN_AND_MEAN` for MinGW (its `<math.h>` hides `M_PI` otherwise, and
+`<windows.h>` defines `min`/`max` as macros). OpenCV comes from MSYS2
+(`mingw-w64-x86_64-opencv`) and supplies the DNN module Remove Background
+needs.
+
+## Build on Linux and macOS
 
 Arch / Manjaro:
 
@@ -127,6 +147,16 @@ sources, which stay in this tree untouched.
 
 ## Credits and license
 
-Compositor is by Wonder Assembly LLC, MIT licensed; its README is kept at
-`docs/upstream-README.md`. compositor-linux is MIT as well, see
-[LICENSE](LICENSE). It bundles nlohmann/json (MIT) and the Lucide icons (ISC).
+This project stands on two open-source projects, and could not exist without
+them:
+
+- **[Compositor](https://github.com/robbietilton/Compositor)** — the original
+  macOS image editor by Wonder Assembly LLC, whose document model, compositor,
+  pixel routines and `.comp` format this port reproduces. Its README is kept at
+  `docs/upstream-README.md`.
+- **[compositor-linux](https://github.com/vomitselfie/compositor-linux)** — the
+  Qt 6 port this Windows port is built on; the portable C++ core, the Qt
+  front end and the build system all come from there.
+
+Both are MIT licensed. This project is MIT as well, see [LICENSE](LICENSE). It
+also bundles nlohmann/json (MIT) and the Lucide icons (ISC).
