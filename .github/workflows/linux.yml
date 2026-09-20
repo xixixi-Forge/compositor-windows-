@@ -1,0 +1,53 @@
+name: compositor-linux
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.compiler }} build and tests
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake libpng-dev qt6-base-dev qt6-svg-dev qt6-wayland libgl1-mesa-dev pkg-config clang
+      - name: Vendored OpenCV (cached)
+        id: opencv
+        uses: actions/cache@v4
+        with:
+          path: opencv-prefix
+          key: opencv-ubuntu-24.04-${{ hashFiles('tools/build-opencv.sh') }}
+      - name: Build OpenCV
+        if: steps.opencv.outputs.cache-hit != 'true'
+        run: tools/build-opencv.sh opencv-prefix
+      - name: Configure
+        run: |
+          if [ "${{ matrix.compiler }}" = "clang" ]; then export CC=clang CXX=clang++; else export CC=gcc CXX=g++; fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCOMPOSITOR_WARNINGS_AS_ERRORS=ON -DOpenCV_DIR="$PWD/opencv-prefix/lib/cmake/opencv4"
+      - name: Build
+        run: cmake --build build -j
+      - name: Unit and golden tests
+        run: ctest --test-dir build --output-on-failure
+      - name: Smoke test the application offscreen
+        run: |
+          QT_QPA_PLATFORM=offscreen ./build/src/app/compositor-linux --demo --screenshot demo.png --save-as Demo.comp
+          QT_QPA_PLATFORM=offscreen ./build/src/app/compositor-linux Demo.comp --screenshot reopened.png
+      - name: Automation socket smoke test
+        run: |
+          ./build/src/app/compositor-linux --headless --rpc-socket "$PWD/rpc.sock" --demo &
+          python3 tools/rpc_smoke.py "$PWD/rpc.sock"
+          kill %1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ matrix.compiler }}
+          path: |
+            demo.png
+            reopened.png
