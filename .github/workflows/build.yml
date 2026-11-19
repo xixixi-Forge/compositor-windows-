@@ -1,0 +1,29 @@
+name: Build Windows App
+
+on:
+  workflow_dispatch: # 允许你手动点击按钮触发
+
+jobs:
+  build:
+    runs-on: windows-latest # 用最新的 Windows 服务器
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.8.0'
+        arch: 'win64_msvc2022_64' # 微软编译器版本
+
+    - name: Configure CMake
+      run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Compiled-App
+        path: build/Release/ # 如果有报错，可能要把这里改成 build/bin/Release/ 或者 build/
